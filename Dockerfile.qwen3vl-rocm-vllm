@@ -1,0 +1,33 @@
+# Qwen3-VL served via vLLM on AMD ROCm GPUs.
+#
+# Build:
+#   docker build -f Dockerfile.qwen3vl-rocm-vllm -t qwen3vl-vllm .
+#
+# Run (see qwen3vl_amd_vllm.sh for the full command):
+#   bash qwen3vl_amd_vllm.sh
+
+# Pin to a specific version for reproducibility.
+# Check https://hub.docker.com/r/rocm/vllm/tags for latest tags.
+FROM vllm/vllm-openai-rocm:v0.16.0
+
+# Install benchmark script dependencies not bundled in the base image.
+RUN pip install --no-cache-dir pillow tqdm
+
+WORKDIR /app
+
+# Default model. Override at runtime via MODEL_PATH env var.
+ENV MODEL_PATH=Qwen/Qwen3-VL-8B-Instruct
+ENV HOST=0.0.0.0
+ENV PORT=8000
+
+EXPOSE 8000
+
+# BF16 gives the best accuracy for Qwen3-VL.
+ENTRYPOINT ["sh", "-c", \
+  "python -m vllm.entrypoints.openai.api_server \
+    --model $MODEL_PATH \
+    --host $HOST \
+    --port $PORT \
+    --dtype bfloat16 \
+    --trust-remote-code \
+    \"$@\"", "--"]

@@ -1,0 +1,44 @@
+# Qwen3-VL served via SGLang on AMD ROCm GPUs.
+#
+# Build:
+#   docker build -f Dockerfile.qwen3vl-rocm-sglang -t qwen3vl-sglang .
+#
+# Run (see qwen3vl_amd_sglang.sh for the full command):
+#   bash qwen3vl_amd_sglang.sh
+
+# Pin to a specific version for reproducibility.
+# Check https://hub.docker.com/r/lmsysorg/sglang/tags for latest rocm tags.
+FROM rocm/sgl-dev:v0.5.9-rocm720-mi35x-20260309
+
+# Install benchmark script dependencies not bundled in the base image.
+RUN pip install --no-cache-dir pillow tqdm
+
+WORKDIR /app
+
+# Default model. Override at runtime via MODEL_PATH env var.
+ENV MODEL_PATH=Qwen/Qwen3-VL-2B-Instruct
+ENV HOST=0.0.0.0
+ENV PORT=30000
+
+EXPOSE 30000
+
+# AITER is AMD's native high-performance attention backend for ROCm. It replaces
+# triton for decode and provides significantly better decode batch throughput on MI35X.
+# SGLANG_USE_AITER=1 is required to activate AITER kernels at runtime.
+ENV SGLANG_USE_AITER=1
+
+# Launch the SGLang server. Flags are overridable by appending args to docker run.
+# Flags confirmed broken on v0.5.9-rocm720-mi35x (do not re-add without testing):
+#   --enable-torch-compile: crashes during CUDA graph capture — torch inductor
+#     autotuning hits HSA_STATUS_ERROR_MEMORY_APERTURE_VIOLATION on triton_mm.
+#   --disable-cuda-graph: was needed on older ROCm; hurts performance on this build.
+#   --sampling-backend pytorch: was needed on older ROCm; hurts performance on this build.
+#   --attention-backend flashinfer: flashinfer is NVIDIA-only; no AMD/ROCm support.
+ENTRYPOINT ["sh", "-c", \
+  "sglang serve \
+    --model-path $MODEL_PATH \
+    --host $HOST \
+    --port $PORT \
+    --trust-remote-code \
+    --attention-backend aiter \
+    \"$@\"", "--"]
