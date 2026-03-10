@@ -81,14 +81,36 @@ def _build_payload(model: str, image_bytes: bytes, instruction: str, max_tokens:
   }
 
 
-def _run_once(server_url: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
-  url = f"{server_url}/v1/chat/completions"
+def _build_native_payload(image_bytes: bytes, instruction: str, max_tokens: int) -> dict[str, Any]:
+  """Build a payload for SGLang's native /generate endpoint (faster than OpenAI-compat)."""
+  b64 = base64.b64encode(image_bytes).decode()
+  # Qwen3-VL chat template with image placeholder
+  prompt = (
+    "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+    "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>"
+    f"{instruction}<|im_end|>\n<|im_start|>assistant\n"
+  )
+  return {
+    "text": prompt,
+    "image_data": b64,
+    "sampling_params": {"max_new_tokens": max_tokens},
+  }
+
+
+def _run_once(server_url: str, payload: dict[str, Any], timeout: int, native: bool = False) -> dict[str, Any]:
+  if native:
+    url = f"{server_url}/generate"
+  else:
+    url = f"{server_url}/v1/chat/completions"
   t_start = time.perf_counter()
   resp = requests.post(url, json=payload, timeout=timeout)
   resp.raise_for_status()
   latency = time.perf_counter() - t_start
   data = resp.json()
-  output_tokens = data.get("usage", {}).get("completion_tokens", 0)
+  if native:
+    output_tokens = data.get("meta_info", {}).get("completion_tokens", 0)
+  else:
+    output_tokens = data.get("usage", {}).get("completion_tokens", 0)
   return {"latency_s": latency, "output_tokens": output_tokens}
 
 
@@ -113,6 +135,7 @@ def _benchmark_server(
   concurrent_requests: int,
   request_timeout: int,
   warmup: int,
+  native: bool = False,
 ) -> dict[str, Any] | None:
   """Returns aggregated stats dict, or None if server is unreachable."""
   try:
@@ -121,11 +144,15 @@ def _benchmark_server(
     print(f"  [{label}] unreachable: {e}")
     return None
 
-  print(f"\n[{label}]  {server_url}")
+  api = "native /generate" if native else "OpenAI-compat /v1/chat/completions"
+  print(f"\n[{label}]  {server_url}  ({api})")
 
   def _submit(img_bytes: bytes) -> dict[str, Any]:
-    payload = _build_payload(model, img_bytes, instruction, max_tokens)
-    return _run_once(server_url, payload, request_timeout)
+    if native:
+      payload = _build_native_payload(img_bytes, instruction, max_tokens)
+    else:
+      payload = _build_payload(model, img_bytes, instruction, max_tokens)
+    return _run_once(server_url, payload, request_timeout, native=native)
 
   if warmup > 0:
     warmup_images = [images[i % len(images)] for i in range(warmup)]
@@ -229,6 +256,8 @@ def main() -> None:
   parser.add_argument("--request-timeout", type=int, default=600)
   parser.add_argument("--skip-sglang", action="store_true")
   parser.add_argument("--skip-vllm", action="store_true")
+  parser.add_argument("--sglang-native", action="store_true",
+                      help="Use SGLang native /generate API instead of OpenAI-compat (faster).")
   args = parser.parse_args()
 
   print(f"\n{'=' * 70}")
@@ -246,7 +275,7 @@ def main() -> None:
     stats = _benchmark_server(
       "SGLang", args.sglang_url, args.sglang_model, images,
       DEFAULT_INSTRUCTION, args.max_tokens, args.concurrent_requests,
-      args.request_timeout, args.warmup,
+      args.request_timeout, args.warmup, native=args.sglang_native,
     )
     if stats:
       all_stats.append(stats)

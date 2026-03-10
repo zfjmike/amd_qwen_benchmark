@@ -23,6 +23,7 @@ IMAGE=${IMAGE:-qwen3vl-sglang}
 GPU=${GPU:-0}  # which GPU index to use (0-indexed)
 
 docker run --rm -it \
+  --privileged \
   --network host \
   --device /dev/kfd \
   --device /dev/dri \
@@ -31,6 +32,8 @@ docker run --rm -it \
   --shm-size "$SHM_SIZE" \
   --cap-add SYS_PTRACE \
   --security-opt seccomp=unconfined \
+  -v $HOME/dockerx:/root/dockerx \
+  -v /data:/data \
   -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
   -v "$HOME/.cache/aiter:/root/.aiter" \
   -v "$HOME/.cache/aiter-jit:/sgl-workspace/aiter/aiter/jit/build" \

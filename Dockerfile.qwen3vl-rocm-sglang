@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir pillow tqdm
 WORKDIR /app
 
 # Default model. Override at runtime via MODEL_PATH env var.
-ENV MODEL_PATH=Qwen/Qwen3-VL-2B-Instruct
+ENV MODEL_PATH=Qwen/Qwen3-VL-8B-Instruct
 ENV HOST=0.0.0.0
 ENV PORT=30000
 
